@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 import numpy as np
 
+
 class ProjENet(nn.Module):
     def __init__(self, nentity, nrelation, vector_dim, p_dropout=0.5, *args, **kwargs):
         super(ProjENet, self).__init__(*args, **kwargs)
@@ -21,10 +22,6 @@ class ProjENet(nn.Module):
         self.tanh = nn.Tanh() 
         self.dropout = nn.Dropout(p=p_dropout)
 
-    #def combination_ope(self, e, r):
-    #    return torch.mm(self.De, e) + torch.mm(self.Dr, r) + self.bias
-
-
     def forward(self, e, r, samples, entity_type):
         e_emb = self.We(e)
         r_emb = self.Wr(r)
@@ -40,14 +37,15 @@ class ProjENet(nn.Module):
 
 
 class ProjE:
-    def __init__(self, nentity, nrelation, vector_dim=200, sample_p=0.5):
+    def __init__(self, nentity, nrelation, device=torch.device('cpu'), vector_dim=200, sample_p=0.5):
         self.nentity = nentity
         self.nrelation = nrelation
         self.vector_dim = vector_dim # k
         self.sample_p = sample_p
         self.sample_n = int(nentity*sample_p)
+        self.device = device
 
-    def _negative_candidate_sampling(self, batch):
+    def _candidate_sampling(self, batch):
         hs = self.X[:,0]; rs = self.X[:,1]; ts = self.X[:,2]
         Sh = []; Th=[]; St = []; Tt = []
         label_h = []
@@ -66,7 +64,6 @@ class ProjE:
                 Sh.append((h, r))
                 candidate_label_t = torch.cat((torch.ones(positive_tails.shape[0]), torch.zeros(negative_tails.shape[0])))
                 label_h.append(candidate_label_t)
-                #negative_samples.append(torch.cat((negative_samples_er, torch.zeros((negative_samples_er.shape[0], 1), dtype=torch.int64)), dim=1))
             else:
                 positive_idxs = ((ts == t) * (rs == r)).nonzero().squeeze(1)
                 positive_heads = hs[positive_idxs] 
@@ -77,60 +74,53 @@ class ProjE:
                 St.append((h, r))
                 candidate_label_h = torch.cat((torch.ones(positive_heads.shape[0]), torch.zeros(negative_heads.shape[0])))
                 label_t.append(candidate_label_h)
-                #negative_samples.append(torch.cat((negative_samples_er, torch.zeros((negative_samples_er.shape[0], 1), dtype=torch.int64)), dim=1))
         return Sh, Th, label_h, St, Tt, label_t
-
-    #def _negative_candidate_sampling(self, entity, entity_type):
-    #    es = self.X[:,0]; rs = self.X[:,1]; ys = self.X[:,2]
-    #    negative_idxs = (self.X[:,entity_type]!=entity).nonzero() 
-    #    sample_idxs = torch.randperm(len(negative_idxs))[:self.sample_n]
-    #    negative_samples = self.X[sample_idxs,:][:,entity_type]
-    #    return negative_samples
     
-    #def _split_head_and_tail(self, batch):
-    #    Sh = []; Th=[]; St = []; Tt = []
-    #    for idx, (h, r, t) in enumerate(batch):
-    #        e = np.random.choice([h, t])
-    #        if e == h:
-    #            #Sh.append((e,r))
-    #            pos_idxs = (self.X[:,0] == e * self.X[:,1] == r).nonzero()
-    #            pos_tail = self.X[pos_idxs][:,2]
-    #            neg_tail = self._negative_candidate_sampling(h, 0)
-    #        else:
-    #            pos_idxs = (self.X[:,2] == e * self.X[:,1] == r).nonzero()
-    #            pos_head = self.X[pos_idxs][:,2]
-    #            neg_head = self._negative_candidate_sampling(t, 2)
-                
-    
+    #pointwise_loss
     def fit(self, X, batch_size=200, nepoch=1000, lr=0.01, alpha=1e-5):
         def init_params(m):
             if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding) or isinstance(m, nn.Parameter) :
                 torch.nn.init.uniform_(m.weight.data, a=-6./(self.vector_dim**(0.5)), b=6./(self.vector_dim**(0.5)))
                 #torch.nn.init.uniform(m.bias.data, a=-6./(self.vector_dim**(0.5)), b=6./(self.vector_dim**(0.5)))
+
         self.X = X
-        model = ProjENet(nentity=self.nentity, nrelation=self.nrelation, vector_dim=self.vector_dim)
-        model.apply(init_params)
+        self.model = ProjENet(nentity=self.nentity, nrelation=self.nrelation, vector_dim=self.vector_dim)
+        self.model.apply(init_params)
+        self.model.to(self.device)
+
         train_loader = torch.utils.data.DataLoader(X, batch_size=batch_size)
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-        model.train()
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        self.model.train()
         for epoch in range(nepoch):
             for batch_idx, batch in enumerate(train_loader):
                 optimizer.zero_grad()
 
-                Sh, Th, label_h, St, Tt, label_t = self._negative_candidate_sampling(batch)
-                Sh = torch.tensor(Sh); Th = torch.stack(Th); label_h = torch.stack(label_h)
-                h_out_sigmoid_h = model(Sh[:,0], Sh[:,1], Th, 0)
+                Sh, Th, label_h, St, Tt, label_t = self._candidate_sampling(batch)
+                Sh = torch.tensor(Sh).to(self.device); Th = torch.stack(Th).to(self.device); label_h = torch.stack(label_h).to(self.device)
+                h_out_sigmoid_h = self.model(Sh[:,0], Sh[:,1], Th, 0)
                 pointwise_loss_h = F.binary_cross_entropy(h_out_sigmoid_h, label_h) 
 
-                St = torch.tensor(St); Tt = torch.stack(Tt); label_t = torch.stack(label_t)
-                h_out_sigmoid_t = model(St[:,0], St[:,1], Tt, 0)
+                St = torch.tensor(St).to(self.device); Tt = torch.stack(Tt).to(self.device); label_t = torch.stack(label_t).to(self.device)
+                h_out_sigmoid_t = self.model(St[:,0], St[:,1], Tt, 0)
                 pointwise_loss_t = F.binary_cross_entropy(h_out_sigmoid_t, label_t) 
 
                 regu_l1 = 0
-                for name, param in model.named_parameters():
+                for name, param in self.model.named_parameters():
                     if not name in ['bp', 'bc'] and not 'bias' in name:  
                         regu_l1 += torch.norm(param, 1)
                 loss = pointwise_loss_h + pointwise_loss_t + alpha*regu_l1
-                print(loss)
                 loss.backward()
                 optimizer.step()
+
+    def predict_entity(self, e, er, entity_type):
+        pass
+    
+    def save(self, save_path):
+        torch.save(self.model.state_dict(), save_path)
+    
+    def load_model(self, model_path):
+        self.model = ProjENet(nentity=self.nentity, nrelation=self.nrelation, vector_dim=self.vector_dim)
+        self.model.load_state_dict(torch.load(model_path))
+    
+    def hits_k(self, x):
+        pass
