@@ -9,10 +9,10 @@ class ProjENet(nn.Module):
         super(ProjENet, self).__init__(*args, **kwargs)
         self.nentity = nentity #
         self.vector_dim = vector_dim # k
-        self.Deh = nn.Linear(self.vector_dim, self.vector_dim) 
-        self.Drh = nn.Linear(self.vector_dim, self.vector_dim) 
-        self.Det = nn.Linear(self.vector_dim, self.vector_dim) 
-        self.Drt = nn.Linear(self.vector_dim, self.vector_dim) 
+        self.Deh = nn.Linear(self.vector_dim, self.vector_dim, bias=False) 
+        self.Drh = nn.Linear(self.vector_dim, self.vector_dim, bias=False) 
+        self.Det = nn.Linear(self.vector_dim, self.vector_dim, bias=False) 
+        self.Drt = nn.Linear(self.vector_dim, self.vector_dim, bias=False) 
         self.Wr = nn.Embedding(self.nentity, self.vector_dim)
         self.We = nn.Embedding(self.nentity, self.vector_dim)
         self.bc = nn.Parameter(torch.rand(self.vector_dim))
@@ -38,8 +38,6 @@ class ProjENet(nn.Module):
         h_out_sigmoid_sq = h_out_sigmoid.squeeze()
         return h_out_sigmoid_sq
 
-def init_params(self, m):
-    torch.nn.init.uniform_(m, a=-6./(self.k**(0.5)), b=6./(self.k**(0.5)))
 
 class ProjE:
     def __init__(self, nentity, nrelation, vector_dim=200, sample_p=0.5):
@@ -105,11 +103,15 @@ class ProjE:
                 
     
     def fit(self, X, batch_size=200, nepoch=1000, lr=0.01, alpha=1e-5):
+        def init_params(m):
+            if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding) or isinstance(m, nn.Parameter) :
+                torch.nn.init.uniform_(m.weight.data, a=-6./(self.vector_dim**(0.5)), b=6./(self.vector_dim**(0.5)))
+                #torch.nn.init.uniform(m.bias.data, a=-6./(self.vector_dim**(0.5)), b=6./(self.vector_dim**(0.5)))
         self.X = X
         model = ProjENet(nentity=self.nentity, nrelation=self.nrelation, vector_dim=self.vector_dim)
         model.apply(init_params)
         train_loader = torch.utils.data.DataLoader(X, batch_size=batch_size)
-        optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         model.train()
         for epoch in range(nepoch):
             for batch_idx, batch in enumerate(train_loader):
