@@ -7,6 +7,7 @@ import csv
 from model import ProjE
 
 TRAIN_DATASET_PATH = './dataset/FB15k/freebase_mtr100_mte100-train.txt'
+TEST_DATASET_PATH = './dataset/FB15k/freebase_mtr100_mte100-test.txt'
 GPU = torch.cuda.is_available()
 
 def load(file_path):
@@ -38,10 +39,15 @@ def load(file_path):
 device = torch.device("cuda" if GPU else "cpu")
 
 train_data, entity_dic, link_dic = load(TRAIN_DATASET_PATH)
+test_data, _, _ = load(TEST_DATASET_PATH)
+
 train_data_tensor = torch.tensor(train_data, dtype=torch.int64)
 proje = ProjE(device=device,nentity=len(entity_dic), nrelation=len(link_dic))
-proje.fit(train_data_tensor)
+proje.fit(train_data_tensor, validation=torch.tensor(test_data))
 #print(torch.tensor(train_data))
 #train_loader = DataLoader(train_data_tensor, batch_size=64)
+
+#%%
+
 
 #%%

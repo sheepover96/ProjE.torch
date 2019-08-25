@@ -77,7 +77,7 @@ class ProjE:
         return Sh, Th, label_h, St, Tt, label_t
     
     #pointwise_loss
-    def fit(self, X, batch_size=200, nepoch=1000, lr=0.01, alpha=1e-5):
+    def fit(self, X, batch_size=200, nepoch=1000, lr=0.01, alpha=1e-5, validation=None):
         def init_params(m):
             if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding) or isinstance(m, nn.Parameter) :
                 torch.nn.init.uniform_(m.weight.data, a=-6./(self.vector_dim**(0.5)), b=6./(self.vector_dim**(0.5)))
@@ -109,11 +109,24 @@ class ProjE:
                     if not name in ['bp', 'bc'] and not 'bias' in name:  
                         regu_l1 += torch.norm(param, 1)
                 loss = pointwise_loss_h + pointwise_loss_t + alpha*regu_l1
+                print(loss)
                 loss.backward()
                 optimizer.step()
+            if validation:
+                print(test(validation))
 
-    def predict_entity(self, e, er, entity_type):
+    def predict_relation(self, e1, e2):
+        e1_tensor = torch.tensor([e1]).unsqueeze(0)
+        e2_tensor = torch.tensor([e2]).unsqueeze(0)
+        e1_projection = self.model(e1_tensor)
+        e2_projection = self.model(e2_tensor)
         pass
+
+    def predict_entity(self, e, r, candidate, entity_type):
+        e_tensor = torch.tensor([e]).unsqueeze(0)
+        r_tensor = torch.tensor([r]).unsqueeze(0)
+        e_projection = self.model(e_tensor)
+        r_projection = self.model(r_tensor)
     
     def save(self, save_path):
         torch.save(self.model.state_dict(), save_path)
@@ -124,3 +137,29 @@ class ProjE:
     
     def hits_k(self, x):
         pass
+
+    def test(self, Xtest):
+        candidate_r = torch.tensor(list(range(self.nrelation)))
+        candidate_e = torch.tensor(list(range(self.nentity)))
+
+        hitk_t = 0
+        hitk_h = 0
+        for idx, (h, r, t) in enumerate(Xtest):
+            tail_ranking_score = self.model(h, r, candidate_e, 0)
+            rank_idx = torch.argsort(tail_ranking_score, descending=True)
+            tail_prediction = candidate_e[rank_idx]
+            print(tail_prediction, t)
+            if tail_prediction[0] == t:
+                hitk_t += 1
+
+            head_ranking_score = self.model(t, r, candidate_e, 0)
+            rank_idx = torch.argsort(head_ranking_score, descending=True)
+            head_prediction = candidate_e[rank_idx]
+            print(head_prediction, t)
+            if head_prediction[0] == t:
+                hitk_h += 1
+
+        hitk_t /= Xtest.shape[0]
+        hitk_h /= Xtest.shape[0]
+
+        return hitk_t, hitk_h
