@@ -86,7 +86,7 @@ class ProjE:
         self.X = X
         self.model = ProjENet(nentity=self.nentity, nrelation=self.nrelation, vector_dim=self.vector_dim)
         self.model.apply(init_params)
-        self.model.to(self.device)
+        self.model = self.model.to(self.device)
 
         train_loader = torch.utils.data.DataLoader(X, batch_size=batch_size)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
@@ -141,10 +141,11 @@ class ProjE:
         pass
 
     def test(self, Xtest):
+        Xtest = Xtest.to(self.device)
         #hs = Xtest[:,0]; rs = Xtest[:,1]; ts = Xtest[:,2]
-        candidate_e = torch.tensor(list(range(self.nentity)))
+        candidate_e = torch.tensor(list(range(self.nentity))).to(self.device)
         #candidate_eb = torch.stack([candidate_e for _ in range(hs.shape[0])])
-        candidate_r = torch.tensor(list(range(self.nrelation)))
+        candidate_r = torch.tensor(list(range(self.nrelation))).to(self.device)
         #candidate_rb = torch.stack([candidate_r for _ in range(hs.shape[0])])
 
         hitk_t = 0
@@ -152,7 +153,7 @@ class ProjE:
         test_loader = torch.utils.data.DataLoader(Xtest, batch_size=1024)
         for batch_idx, batch in enumerate(test_loader):
             hs = batch[:,0]; rs = batch[:,1]; ts = batch[:,2]
-            candidate_eb = torch.stack([candidate_e for _ in range(batch.shape[0])])
+            candidate_eb = torch.stack([candidate_e for _ in range(batch.shape[0])]).to(self.device)
             tail_ranking_score = self.model(hs, rs, candidate_eb, 0)
             rank_idx = torch.argsort(tail_ranking_score, dim=1, descending=True)
             tail_prediction = candidate_e[rank_idx[:,0]]
