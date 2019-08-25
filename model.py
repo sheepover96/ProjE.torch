@@ -93,10 +93,12 @@ class ProjE:
         self.model.train()
         for epoch in range(nepoch):
             for batch_idx, batch in enumerate(train_loader):
+                if (batch_idx == 1): break
                 optimizer.zero_grad()
 
                 Sh, Th, label_h, St, Tt, label_t = self._candidate_sampling(batch)
                 Sh = torch.tensor(Sh).to(self.device); Th = torch.stack(Th).to(self.device); label_h = torch.stack(label_h).to(self.device)
+                print(Sh[:,0].shape, Sh[:,1].shape, Th.shape)
                 h_out_sigmoid_h = self.model(Sh[:,0], Sh[:,1], Th, 0)
                 pointwise_loss_h = F.binary_cross_entropy(h_out_sigmoid_h, label_h) 
 
@@ -112,8 +114,8 @@ class ProjE:
                 print(loss)
                 loss.backward()
                 optimizer.step()
-            if validation:
-                print(test(validation))
+            if validation is not None:
+                print(self.test(validation))
 
     def predict_relation(self, e1, e2):
         e1_tensor = torch.tensor([e1]).unsqueeze(0)
@@ -139,25 +141,35 @@ class ProjE:
         pass
 
     def test(self, Xtest):
-        candidate_r = torch.tensor(list(range(self.nrelation)))
+        #hs = Xtest[:,0]; rs = Xtest[:,1]; ts = Xtest[:,2]
         candidate_e = torch.tensor(list(range(self.nentity)))
+        #candidate_eb = torch.stack([candidate_e for _ in range(hs.shape[0])])
+        candidate_r = torch.tensor(list(range(self.nrelation)))
+        #candidate_rb = torch.stack([candidate_r for _ in range(hs.shape[0])])
 
         hitk_t = 0
         hitk_h = 0
-        for idx, (h, r, t) in enumerate(Xtest):
-            tail_ranking_score = self.model(h, r, candidate_e, 0)
-            rank_idx = torch.argsort(tail_ranking_score, descending=True)
-            tail_prediction = candidate_e[rank_idx]
-            print(tail_prediction, t)
-            if tail_prediction[0] == t:
-                hitk_t += 1
+        test_loader = torch.utils.data.DataLoader(Xtest, batch_size=1024)
+        for batch_idx, batch in enumerate(test_loader):
+            hs = batch[:,0]; rs = batch[:,1]; ts = batch[:,2]
+            candidate_eb = torch.stack([candidate_e for _ in range(batch.shape[0])])
+            tail_ranking_score = self.model(hs, rs, candidate_eb, 0)
+            rank_idx = torch.argsort(tail_ranking_score, dim=1, descending=True)
+            tail_prediction = candidate_e[rank_idx[:,0]]
+            hitk_t += torch.sum(tail_prediction==ts)
+        #for idx, (h, r, t) in enumerate(Xtest):
+        #    h = h.unsqueeze(0); r = r.unsqueeze(0); t = t.unsqueeze(0)
+        #    tail_ranking_score = self.model(h, r, candidate_e.unsqueeze(0), 0)
+        #    rank_idx = torch.argsort(tail_ranking_score, descending=True)
+        #    tail_prediction = candidate_e[rank_idx]
+        #    if tail_prediction[0] == t:
+        #        hitk_t += 1
 
-            head_ranking_score = self.model(t, r, candidate_e, 0)
-            rank_idx = torch.argsort(head_ranking_score, descending=True)
-            head_prediction = candidate_e[rank_idx]
-            print(head_prediction, t)
-            if head_prediction[0] == t:
-                hitk_h += 1
+        #    head_ranking_score = self.model(t, r, candidate_e.unsqueeze(0), 0)
+        #    rank_idx = torch.argsort(head_ranking_score, descending=True)
+        #    head_prediction = candidate_e[rank_idx]
+        #    if head_prediction[0] == h:
+        #        hitk_h += 1
 
         hitk_t /= Xtest.shape[0]
         hitk_h /= Xtest.shape[0]
