@@ -36,17 +36,17 @@ def load(file_path):
             data.append((entity_dic[head], link_dic[link], entity_dic[tail]))
         return data, entity_dic, link_dic
 
-device = torch.device("cuda" if GPU else "cpu")
 
-train_data, entity_dic, link_dic = load(TRAIN_DATASET_PATH)
-test_data, _, _ = load(TEST_DATASET_PATH)
-
-print(len(test_data))
-train_data_tensor = torch.tensor(train_data, dtype=torch.int64)
-proje = ProjE(device=device,nentity=len(entity_dic), nrelation=len(link_dic))
-#proje.fit(train_data_tensor, validation=torch.tensor(test_data))
-#print(torch.tensor(train_data))
-#train_loader = DataLoader(train_data_tensor, batch_size=64)
+if __name__ == '__main__':
+    device = torch.device("cuda" if GPU else "cpu")
+    train_data, entity_dic, link_dic = load(TRAIN_DATASET_PATH)
+    train_data_tensor = torch.tensor(train_data)
+    #train_data_tensor = train_data_tensor[:10000]
+    test_data, _, _ = load(TEST_DATASET_PATH)
+    proje = ProjE(device=device,nentity=len(entity_dic), nrelation=len(link_dic))
+    proje.fit(train_data_tensor, validation=torch.tensor(test_data))
+    #print(torch.tensor(train_data))
+    #train_loader = DataLoader(train_data_tensor, batch_size=64)
 
 #%%
 

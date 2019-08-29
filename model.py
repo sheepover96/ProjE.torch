@@ -4,7 +4,9 @@ import torch.nn.functional as F
 
 import numpy as np
 import multiprocessing as multi
-from multiprocessing import Manager, Pool
+from multiprocessing import Manager, Pool, Lock
+
+import time
 
 
 class ProjENet(nn.Module):
@@ -47,7 +49,7 @@ class ProjE:
         self.sample_n = int(nentity*sample_p)
         self.device = device
 
-    def _sampling(self, idx, triple, Sh, Th, label_h, St, Tt, label_t):
+    def _sampling(self, idx, triple, Sh, Th, label_h, St, Tt, label_t, lock):
         h = triple[0]; r = triple[1]; t = triple[2]
         e = np.random.choice([h,t])
         if e == h:
@@ -57,30 +59,101 @@ class ProjE:
             sample_idxs = torch.randperm(len(negative_tails))[:self.sample_n - len(positive_tails)]
             negative_tails = negative_tails[sample_idxs]
             candidate_tail = torch.cat((positive_tails, negative_tails), dim=0)
+            candidate_label_t = torch.cat((torch.ones(positive_tails.shape[0]), torch.zeros(negative_tails.shape[0])))
+            lock.acquire()
             Th.append(candidate_tail)
             Sh.append((h, r))
-            candidate_label_t = torch.cat((torch.ones(positive_tails.shape[0]), torch.zeros(negative_tails.shape[0])))
             label_h.append(candidate_label_t)
+            lock.release()
         else:
             positive_idxs = ((self.ts == t) * (self.rs == r)).nonzero().squeeze(1)
             positive_heads = self.hs[positive_idxs]
             negative_heads = torch.tensor(np.setdiff1d(self.hs, positive_heads))
             sample_idxs = torch.randperm(len(negative_heads))[:self.sample_n - len(positive_heads)]
             negative_heads = negative_heads[sample_idxs]
+            candidate_label_h = torch.cat((torch.ones(positive_heads.shape[0]), torch.zeros(negative_heads.shape[0])))
+            lock.acquire()
             Tt.append(torch.cat((positive_heads, negative_heads), dim=0))
             St.append((t, r))
-            candidate_label_h = torch.cat((torch.ones(positive_heads.shape[0]), torch.zeros(negative_heads.shape[0])))
             label_t.append(candidate_label_h)
+            lock.release()
 
-    def _candidate_sampling_mp(self, batch):
+    def _candidate_sampling_mp_batch(self, batch):
         manager = Manager()
         Sh = manager.list(); Th=manager.list(); label_h = manager.list()
         St = manager.list(); Tt=manager.list(); label_t = manager.list()
         pool = Pool(multi.cpu_count())
+        lock = Lock()
         for idx, triple in enumerate(batch):
+            pool.apply_async(self._sampling, (idx, triple, Sh, Th, label_h, St, Tt, label_t, lock))
+        pool.close()
+        pool.join()
+        return Sh, Th, label_h, St, Tt, label_t
+
+    def _candidate_sampling_mp(self):
+        manager = Manager()
+        Sh = manager.list(); Th=manager.list(); label_h = manager.list()
+        St = manager.list(); Tt=manager.list(); label_t = manager.list()
+        pool = Pool(4)
+        for idx, triple in enumerate(self.X):
             pool.apply_async(self._sampling, (idx, triple, Sh, Th, label_h, St, Tt, label_t))
         pool.close()
         pool.join()
+        return Sh, Th, label_h, St, Tt, label_t
+
+    def _cache_sample_candidate(self):
+        self.hr_dic_pos = {}; self.tr_dic_pos = {}
+        self.hr_dic_neg = {}; self.tr_dic_neg = {}
+        for idx, (h, r, t) in enumerate(self.X):
+            h = h.item(); r = r.item(); t = t.item()
+            #print(h,r,t)
+            if not (h, r) in self.hr_dic_pos:
+                self.hr_dic_pos[(h, r)] = [t]
+            else:
+                self.hr_dic_pos[(h, r)].append(t)
+
+            if not (t, r) in self.tr_dic_pos:
+                self.tr_dic_pos[(t, r)] = [h]
+            else:
+                self.tr_dic_pos[(t, r)].append(h)
+        entities = torch.arange(self.nentity)
+        for key in self.hr_dic_pos.keys():
+            positive_tails = self.hr_dic_pos[key]
+            self.hr_dic_neg[key] = torch.tensor(np.setdiff1d(entities, positive_tails))
+            self.hr_dic_pos[key] = torch.tensor(positive_tails)
+
+        for key in self.tr_dic_pos.keys():
+            positive_heads = self.tr_dic_pos[key]
+            self.tr_dic_neg[key] = torch.tensor(np.setdiff1d(entities, positive_heads))
+            self.tr_dic_pos[key] = torch.tensor(positive_heads)
+
+    def _candidate_sampling_with_cache(self, batch):
+        hs = self.X[:,0]; rs = self.X[:,1]; ts = self.X[:,2]
+        Sh = []; Th=[]; St = []; Tt = []
+        label_h = []
+        label_t = []
+        for (h, r, t) in batch:
+            h = h.item(); r = r.item(); t = t.item()
+            e = np.random.choice([h,t])
+            if e == h:
+                positive_tails = self.hr_dic_pos[(h, r)]
+                negative_tails = self.hr_dic_neg[(h, r)]
+                sample_idxs = torch.randperm(len(negative_tails))[:self.sample_n - len(positive_tails)]
+                negative_tails = negative_tails[sample_idxs]
+                candidate_tail = torch.cat((positive_tails, negative_tails), dim=0)
+                Th.append(candidate_tail)
+                Sh.append((h, r))
+                candidate_label_t = torch.cat((torch.ones(positive_tails.shape[0]), torch.zeros(negative_tails.shape[0])))
+                label_h.append(candidate_label_t)
+            else:
+                positive_heads = self.tr_dic_pos[(t, r)]
+                negative_heads = self.tr_dic_neg[(t, r)]
+                sample_idxs = torch.randperm(len(negative_heads))[:self.sample_n - len(positive_heads)]
+                negative_heads = negative_heads[sample_idxs]
+                Tt.append(torch.cat((positive_heads, negative_heads), dim=0))
+                St.append((t, r))
+                candidate_label_h = torch.cat((torch.ones(positive_heads.shape[0]), torch.zeros(negative_heads.shape[0])))
+                label_t.append(candidate_label_h)
         return Sh, Th, label_h, St, Tt, label_t
 
     def _candidate_sampling(self, batch):
@@ -123,10 +196,10 @@ class ProjE:
 
         self.X = X
         self.hs = self.X[:,0]; self.rs = self.X[:,1]; self.ts = self.X[:,2]
+        self._cache_sample_candidate()
         self.model = ProjENet(nentity=self.nentity, nrelation=self.nrelation, vector_dim=self.vector_dim)
         self.model.apply(init_params)
         self.model = self.model.to(self.device)
-
         train_loader = torch.utils.data.DataLoader(X, batch_size=batch_size)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         self.model.train()
@@ -134,7 +207,7 @@ class ProjE:
             for batch_idx, batch in enumerate(train_loader):
                 optimizer.zero_grad()
 
-                Sh, Th, label_h, St, Tt, label_t = self._candidate_sampling(batch)
+                Sh, Th, label_h, St, Tt, label_t = self._candidate_sampling_with_cache(batch)
                 Sh = torch.tensor(Sh).to(self.device); Th = torch.stack(Th).to(self.device); label_h = torch.stack(label_h).to(self.device)
                 h_out_sigmoid_h = self.model(Sh[:,0], Sh[:,1], Th, 0)
                 pointwise_loss_h = F.binary_cross_entropy(h_out_sigmoid_h, label_h)
