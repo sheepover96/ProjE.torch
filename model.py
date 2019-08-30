@@ -224,7 +224,7 @@ class ProjE:
                 print(loss)
                 loss.backward()
                 optimizer.step()
-            if validation is not None:
+            #if validation is not None:
                 print(self.test(validation))
 
     def predict_relation(self, e1, e2):
@@ -266,24 +266,25 @@ class ProjE:
             hs = batch[:,0]; rs = batch[:,1]; ts = batch[:,2]
             candidate_eb = torch.stack([candidate_e for _ in range(batch.shape[0])]).to(self.device)
             tail_ranking_score = self.model(hs, rs, candidate_eb, 0)
-            rank_idx = torch.argsort(tail_ranking_score, dim=1, descending=True)
-            tail_prediction = candidate_e[rank_idx[:,0]]
-            hitk_t += torch.sum(tail_prediction==ts)
-        #for idx, (h, r, t) in enumerate(Xtest):
-        #    h = h.unsqueeze(0); r = r.unsqueeze(0); t = t.unsqueeze(0)
-        #    tail_ranking_score = self.model(h, r, candidate_e.unsqueeze(0), 0)
-        #    rank_idx = torch.argsort(tail_ranking_score, descending=True)
-        #    tail_prediction = candidate_e[rank_idx]
-        #    if tail_prediction[0] == t:
-        #        hitk_t += 1
+            rank_idxs = torch.argsort(tail_ranking_score, dim=1, descending=True)
+            for idx, rank_idx in enumerate(rank_idxs):
+                tail_prediction = candidate_e[rank_idx[:10]]
+                t = ts[idx]
+                if t in tail_prediction:
+                    hitk_t += 1
 
-        #    head_ranking_score = self.model(t, r, candidate_e.unsqueeze(0), 0)
-        #    rank_idx = torch.argsort(head_ranking_score, descending=True)
-        #    head_prediction = candidate_e[rank_idx]
-        #    if head_prediction[0] == h:
-        #        hitk_h += 1
+        for batch_idx, batch in enumerate(test_loader):
+            hs = batch[:,0]; rs = batch[:,1]; ts = batch[:,2]
+            candidate_eb = torch.stack([candidate_e for _ in range(batch.shape[0])]).to(self.device)
+            head_ranking_score = self.model(ts, rs, candidate_eb, 2)
+            rank_idxs = torch.argsort(head_ranking_score, dim=1, descending=True)
+            for idx, rank_idx in enumerate(rank_idxs):
+                head_prediction = candidate_e[rank_idx[:10]]
+                h = hs[idx]
+                if h in head_prediction:
+                    hitk_h += 1
 
-        hitk_t /= Xtest.shape[0]
-        hitk_h /= Xtest.shape[0]
+        hitk_t = (hitk_t / Xtest.shape[0]) * 100
+        hitk_h = (hitk_h / Xtest.shape[0]) * 100
 
         return hitk_t, hitk_h
