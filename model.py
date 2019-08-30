@@ -204,6 +204,7 @@ class ProjE:
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         self.model.train()
         for epoch in range(nepoch):
+            batch_loss = 0
             for batch_idx, batch in enumerate(train_loader):
                 optimizer.zero_grad()
 
@@ -224,7 +225,11 @@ class ProjE:
                 print(loss)
                 loss.backward()
                 optimizer.step()
-            #if validation is not None:
+                batch_loss += loss.item()
+                batch_loss += loss.item()
+            print('epoch', epoch+1, batch_loss/len(train_loader))
+            print(self.test(X[:10000]))
+            if validation is not None and (epoch + 1)%1 == 0:
                 print(self.test(validation))
 
     def predict_relation(self, e1, e2):
@@ -259,8 +264,8 @@ class ProjE:
         candidate_r = torch.tensor(list(range(self.nrelation))).to(self.device)
         #candidate_rb = torch.stack([candidate_r for _ in range(hs.shape[0])])
 
-        hitk_t = 0
-        hitk_h = 0
+        hitk_t = 0; mean_rank_t = 0
+        hitk_h = 0; mean_rank_h = 0
         test_loader = torch.utils.data.DataLoader(Xtest, batch_size=1024)
         for batch_idx, batch in enumerate(test_loader):
             hs = batch[:,0]; rs = batch[:,1]; ts = batch[:,2]
@@ -270,6 +275,8 @@ class ProjE:
             for idx, rank_idx in enumerate(rank_idxs):
                 tail_prediction = candidate_e[rank_idx[:10]]
                 t = ts[idx]
+                rank = ((tail_prediction == t).nonzero()).squeeze().item()
+                mean_rank_t += rank
                 if t in tail_prediction:
                     hitk_t += 1
 
@@ -281,10 +288,14 @@ class ProjE:
             for idx, rank_idx in enumerate(rank_idxs):
                 head_prediction = candidate_e[rank_idx[:10]]
                 h = hs[idx]
+                rank = ((head_prediction == h).nonzero()).squeeze().item()
+                mean_rank_h += rank
                 if h in head_prediction:
                     hitk_h += 1
 
         hitk_t = (hitk_t / Xtest.shape[0]) * 100
         hitk_h = (hitk_h / Xtest.shape[0]) * 100
+        mean_rank_t /= Xtest.shape[0]
+        mean_rank_h /= Xtest.shape[0]
 
-        return hitk_t, hitk_h
+        return hitk_t, mean_rank_t, hitk_h, mean_rank_h

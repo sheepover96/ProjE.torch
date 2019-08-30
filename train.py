@@ -7,7 +7,8 @@ import csv
 from model import ProjE
 
 TRAIN_DATASET_PATH = './dataset/FB15k/freebase_mtr100_mte100-train.txt'
-TEST_DATASET_PATH = './dataset/FB15k/test.txt'
+#TEST_DATASET_PATH = './dataset/FB15k/test.txt'
+TEST_DATASET_PATH = './dataset/FB15k/freebase_mtr100_mte100-test.txt'
 GPU = torch.cuda.is_available()
 
 def load(file_path):
