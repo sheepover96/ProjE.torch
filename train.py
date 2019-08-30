@@ -13,13 +13,13 @@ GPU = torch.cuda.is_available()
 
 def load(file_path):
     with open(file_path, 'r') as f:
-        train_tsv_reader = csv.reader(f, delimiter='\t')
+        tsv_reader = csv.reader(f, delimiter='\t')
         data = []
         entity_dic = {}
         link_dic = {}
         entity_idx = 0
         link_idx = 0
-        for row in train_tsv_reader: 
+        for row in tsv_reader: 
             head = row[0]
             link = row[1]
             tail = row[2]
@@ -37,12 +37,22 @@ def load(file_path):
             data.append((entity_dic[head], link_dic[link], entity_dic[tail]))
         return data, entity_dic, link_dic
 
+def load_with_dic(file_path, entity_dic, relation_dic):
+    with open(file_path, 'r') as f:
+        tsv_reader = csv.reader(f, delimiter='\t')
+        data = []
+        for row in tsv_reader: 
+            head = row[0]
+            link = row[1]
+            tail = row[2]
+            data.append((entity_dic[head], relation_dic[link], entity_dic[tail]))
+        return data
 
 if __name__ == '__main__':
     device = torch.device("cuda" if GPU else "cpu")
     train_data, entity_dic, link_dic = load(TRAIN_DATASET_PATH)
     train_data_tensor = torch.tensor(train_data)
-    test_data, _, _ = load(TEST_DATASET_PATH)
+    test_data = load_with_dic(TEST_DATASET_PATH, entity_dic, relation_dic)
     proje = ProjE(device=device,nentity=len(entity_dic), nrelation=len(link_dic))
     proje.fit(train_data_tensor, validation=torch.tensor(test_data))
 

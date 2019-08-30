@@ -35,7 +35,7 @@ class ProjENet(nn.Module):
         else:
             combination = self.Det(e_emb) + self.Drt(r_emb) + self.bc
         combination_unsq = combination.unsqueeze(2)
-        h_out_sigmoid = self.sigmoid(torch.bmm(Wc, self.tanh(self.dropout(combination_unsq))) + self.bp)
+        h_out_sigmoid = self.sigmoid(torch.bmm(Wc, self.dropout(self.tanh(combination_unsq))) + self.bp)
         h_out_sigmoid_sq = h_out_sigmoid.squeeze()
         return h_out_sigmoid_sq
 
@@ -211,21 +211,19 @@ class ProjE:
                 Sh, Th, label_h, St, Tt, label_t = self._candidate_sampling_with_cache(batch)
                 Sh = torch.tensor(Sh).to(self.device); Th = torch.stack(Th).to(self.device); label_h = torch.stack(label_h).to(self.device)
                 h_out_sigmoid_h = self.model(Sh[:,0], Sh[:,1], Th, 0)
-                pointwise_loss_h = F.binary_cross_entropy(h_out_sigmoid_h, label_h)
+                pointwise_loss_h = F.binary_cross_entropy(h_out_sigmoid_h, label_h, reduction='sum')
 
                 St = torch.tensor(St).to(self.device); Tt = torch.stack(Tt).to(self.device); label_t = torch.stack(label_t).to(self.device)
                 h_out_sigmoid_t = self.model(St[:,0], St[:,1], Tt, 2)
-                pointwise_loss_t = F.binary_cross_entropy(h_out_sigmoid_t, label_t)
+                pointwise_loss_t = F.binary_cross_entropy(h_out_sigmoid_t, label_t, reduction='sum')
 
                 regu_l1 = 0
                 for name, param in self.model.named_parameters():
                     if not name in ['bp', 'bc'] and not 'bias' in name:
                         regu_l1 += torch.norm(param, 1)
                 loss = pointwise_loss_h + pointwise_loss_t + alpha*regu_l1
-                print(loss)
                 loss.backward()
                 optimizer.step()
-                batch_loss += loss.item()
                 batch_loss += loss.item()
             print('epoch', epoch+1, batch_loss/len(train_loader))
             print(self.test(X[:10000]))
@@ -266,18 +264,18 @@ class ProjE:
 
         hitk_t = 0; mean_rank_t = 0
         hitk_h = 0; mean_rank_h = 0
-        test_loader = torch.utils.data.DataLoader(Xtest, batch_size=1024)
+        test_loader = torch.utils.data.DataLoader(Xtest, batch_size=128)
         for batch_idx, batch in enumerate(test_loader):
             hs = batch[:,0]; rs = batch[:,1]; ts = batch[:,2]
             candidate_eb = torch.stack([candidate_e for _ in range(batch.shape[0])]).to(self.device)
             tail_ranking_score = self.model(hs, rs, candidate_eb, 0)
             rank_idxs = torch.argsort(tail_ranking_score, dim=1, descending=True)
             for idx, rank_idx in enumerate(rank_idxs):
-                tail_prediction = candidate_e[rank_idx[:10]]
+                tail_prediction = candidate_e[rank_idx]
                 t = ts[idx]
                 rank = ((tail_prediction == t).nonzero()).squeeze().item()
                 mean_rank_t += rank
-                if t in tail_prediction:
+                if t in tail_prediction[:10]:
                     hitk_t += 1
 
         for batch_idx, batch in enumerate(test_loader):
@@ -286,11 +284,11 @@ class ProjE:
             head_ranking_score = self.model(ts, rs, candidate_eb, 2)
             rank_idxs = torch.argsort(head_ranking_score, dim=1, descending=True)
             for idx, rank_idx in enumerate(rank_idxs):
-                head_prediction = candidate_e[rank_idx[:10]]
+                head_prediction = candidate_e[rank_idx]
                 h = hs[idx]
                 rank = ((head_prediction == h).nonzero()).squeeze().item()
                 mean_rank_h += rank
-                if h in head_prediction:
+                if h in head_prediction[:10]:
                     hitk_h += 1
 
         hitk_t = (hitk_t / Xtest.shape[0]) * 100
