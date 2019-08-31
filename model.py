@@ -14,10 +14,14 @@ class ProjENet(nn.Module):
         super(ProjENet, self).__init__(*args, **kwargs)
         self.nentity = nentity #
         self.vector_dim = vector_dim # k
-        self.Deh = nn.Linear(self.vector_dim, self.vector_dim, bias=False)
-        self.Drh = nn.Linear(self.vector_dim, self.vector_dim, bias=False)
-        self.Det = nn.Linear(self.vector_dim, self.vector_dim, bias=False)
-        self.Drt = nn.Linear(self.vector_dim, self.vector_dim, bias=False)
+        #self.Deh = nn.Linear(self.vector_dim, self.vector_dim, bias=False)
+        #self.Drh = nn.Linear(self.vector_dim, self.vector_dim, bias=False)
+        #self.Det = nn.Linear(self.vector_dim, self.vector_dim, bias=False)
+        #self.Drt = nn.Linear(self.vector_dim, self.vector_dim, bias=False)
+        self.Deh = nn.Parameter(torch.FloatTensor(self.vector_dim).uniform_(-6/(vector_dim**0.5), 6/(vector_dim**0.5)))
+        self.Drh = nn.Parameter(torch.FloatTensor(self.vector_dim).uniform_(-6/(vector_dim**0.5), 6/(vector_dim**0.5)))
+        self.Det = nn.Parameter(torch.FloatTensor(self.vector_dim).uniform_(-6/(vector_dim**0.5), 6/(vector_dim**0.5)))
+        self.Drt = nn.Parameter(torch.FloatTensor(self.vector_dim).uniform_(-6/(vector_dim**0.5), 6/(vector_dim**0.5)))
         self.Wr = nn.Embedding(self.nentity, self.vector_dim)
         self.We = nn.Embedding(self.nentity, self.vector_dim)
         self.bc = nn.Parameter(torch.rand(self.vector_dim))
@@ -30,10 +34,14 @@ class ProjENet(nn.Module):
         e_emb = self.We(e)
         r_emb = self.Wr(r)
         Wc = self.We(samples)
+        #if entity_type == 0:
+        #    combination = self.Deh(e_emb) + self.Drh(r_emb) + self.bc
+        #else:
+        #    combination = self.Det(e_emb) + self.Drt(r_emb) + self.bc
         if entity_type == 0:
-            combination = self.Deh(e_emb) + self.Drh(r_emb) + self.bc
+            combination = self.Deh * e_emb + self.Drh * r_emb + self.bc
         else:
-            combination = self.Det(e_emb) + self.Drt(r_emb) + self.bc
+            combination = self.Det * e_emb + self.Drt * r_emb + self.bc
         combination_unsq = combination.unsqueeze(2)
         h_out_sigmoid = self.sigmoid(torch.bmm(Wc, self.dropout(self.tanh(combination_unsq))) + self.bp)
         h_out_sigmoid_sq = h_out_sigmoid.squeeze()
