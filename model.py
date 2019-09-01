@@ -30,7 +30,7 @@ class ProjENet(nn.Module):
         self.tanh = nn.Tanh()
         self.dropout = nn.Dropout(p=p_dropout)
 
-    def forward(self, e, r, samples, entity_type, loss_method='pointwise'):
+    def forward(self, e, r, samples, entity_type, loss_method='wlistwise'):
         e_emb = self.We(e)
         r_emb = self.Wr(r)
         Wc = self.We(samples)
@@ -88,18 +88,6 @@ class ProjE:
             label_t.append(candidate_label_h)
             lock.release()
 
-    def _candidate_sampling_mp_batch(self, batch):
-        manager = Manager()
-        Sh = manager.list(); Th=manager.list(); label_h = manager.list()
-        St = manager.list(); Tt=manager.list(); label_t = manager.list()
-        pool = Pool(multi.cpu_count())
-        lock = Lock()
-        for idx, triple in enumerate(batch):
-            pool.apply_async(self._sampling, (idx, triple, Sh, Th, label_h, St, Tt, label_t, lock))
-        pool.close()
-        pool.join()
-        return Sh, Th, label_h, St, Tt, label_t
-
     def _candidate_sampling_mp(self):
         manager = Manager()
         Sh = manager.list(); Th=manager.list(); label_h = manager.list()
@@ -116,7 +104,6 @@ class ProjE:
         self.hr_dic_neg = {}; self.tr_dic_neg = {}
         for idx, (h, r, t) in enumerate(self.X):
             h = h.item(); r = r.item(); t = t.item()
-            #print(h,r,t)
             if not (h, r) in self.hr_dic_pos:
                 self.hr_dic_pos[(h, r)] = [t]
             else:
@@ -197,13 +184,6 @@ class ProjE:
                 label_t.append(candidate_label_h)
         return Sh, Th, label_h, St, Tt, label_t
 
-    def _sampled_softmax(self, tensor, weights):
-        max_val = torch.max(tensor, dim=1)[0]
-        tensor_rescaled = torch.t(torch.t(tensor) - max_val)
-        tensor_exp = torch.exp(tensor_rescaled)
-        tensor_sum = torch.sum(tensor_exp * torch.abs(weights), dim=1)
-        return (tensor_exp/tensor_sum) * torch.abs(weights)
-
     def fit(self, X, batch_size=200, nepoch=100, lr=0.01, alpha=1e-5, validation=None, loss_method='wlistwise'):
         def init_params(m):
             if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding) or isinstance(m, nn.Parameter) :
@@ -226,24 +206,24 @@ class ProjE:
 
                 Sh, Th, label_h, St, Tt, label_t = self._candidate_sampling_with_cache(batch)
                 Sh = torch.tensor(Sh).to(self.device); Th = torch.stack(Th).to(self.device); label_h = torch.stack(label_h).to(self.device)
-                h_out_h = self.model(Sh[:,0], Sh[:,1], Th, 0)
+                h_out_h = self.model(Sh[:,0], Sh[:,1], Th, 0, loss_method=loss_method)
 
                 St = torch.tensor(St).to(self.device); Tt = torch.stack(Tt).to(self.device); label_t = torch.stack(label_t).to(self.device)
-                h_out_t = self.model(St[:,0], St[:,1], Tt, 2)
+                h_out_t = self.model(St[:,0], St[:,1], Tt, 2, loss_method=loss_method)
 
                 if loss_method == 'pointwise':
                     loss_h = F.binary_cross_entropy(h_out_h, label_h, reduction='sum')
                     loss_t = F.binary_cross_entropy(h_out_t, label_t, reduction='sum')
                 elif loss_method == 'listwise':
-                    h_out_h_sm = self._sampled_softmax(h_out_h, label_h)
-                    loss_h = -torch.sum(torch.log(torch.clip(h_out_h_sm, 1e-10, 1.)) * label_h)
-                    h_out_t_sm = self._sampled_softmax(h_out_t, label_t)
-                    loss_t = -torch.sum(torch.log(torch.clip(h_out_t_sm, 1e-10, 1.)) * label_t)
+                    h_out_h_sm = F.softmax(h_out_h, dim=1)
+                    loss_h = -torch.sum(torch.log(torch.clamp(h_out_h_sm, 1e-10, 1.)) * label_h)
+                    h_out_t_sm = F.softmax(h_out_t, dim=1)
+                    loss_t = -torch.sum(torch.log(torch.clamp(h_out_t_sm, 1e-10, 1.)) * label_t)
                 else: #wlistwise
-                    h_out_h_sm = self._sampled_softmax(h_out_h, label_h)
-                    loss_h = -torch.sum(torch.log(torch.clip(h_out_h_sm, 1e-10, 1.)) * label_h / torch.sum(label_h, dim=1))
-                    h_out_t_sm = self._sampled_softmax(h_out_t, label_t)
-                    loss_t = -torch.sum(torch.log(torch.clip(h_out_t_sm, 1e-10, 1.)) * label_t / torch.sum(label_t, dim=1))
+                    h_out_h_sm = F.softmax(h_out_h, dim=1)
+                    loss_h = -torch.sum(torch.log(torch.clamp(h_out_h_sm, 1e-10, 1.)) * label_h / torch.sum(label_h, dim=1).unsqueeze(1))
+                    h_out_t_sm = F.softmax(h_out_t, dim=1)
+                    loss_t = -torch.sum(torch.log(torch.clamp(h_out_t_sm, 1e-10, 1.)) * label_t / torch.sum(label_t, dim=1).unsqueeze(1))
 
                 regu_l1 = 0
                 for name, param in self.model.named_parameters():

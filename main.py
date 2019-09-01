@@ -2,7 +2,7 @@
 import torch
 from torch.utils.data import DataLoader
 
-import csv
+import csv, argparse
 
 from model import ProjE
 
@@ -49,12 +49,25 @@ def load_with_dic(file_path, entity_dic, relation_dic):
         return data
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--vector_dim', help='dimension of embedding vector', default=200, type=int)
+    parser.add_argument('--sample_p', help='probability of candidate sampling', default=0.5, type=float)
+    parser.add_argument('--batch_size', help='batch size for training', default=200, type=int)
+    parser.add_argument('--nepoch', help='number of training epoch', default=100, type=int)
+    parser.add_argument('--batch_size', help='batch size for training', default=200, type=int)
+    parser.add_argument('--lr', help='learning rate', default=0.01, type=float)
+    parser.add_argument('--alpha', help='weight for L1 regularlization', default=1e-5, type=float)
+    parser.add_argument('--loss_method', help='loss method', default='wlistwise')
+
+    args = parser.parse_args()
+
     device = torch.device("cuda" if GPU else "cpu")
     train_data, entity_dic, link_dic = load(TRAIN_DATASET_PATH)
     train_data_tensor = torch.tensor(train_data)
-    train_data_tensor = train_data_tensor[:1000]
+    #train_data_tensor = train_data_tensor[:1000]
     test_data = load_with_dic(TEST_DATASET_PATH, entity_dic, link_dic)
-    proje = ProjE(device=device,nentity=len(entity_dic), nrelation=len(link_dic))
-    proje.fit(train_data_tensor, validation=torch.tensor(test_data))
-
-#%%
+    proje = ProjE(device=device,nentity=len(entity_dic),\
+        nrelation=len(link_dic), vector_dim=args.vector_dim, sample_p=args.sample_p)
+    proje.fit(train_data_tensor, validation=torch.tensor(test_data),\
+        batch_size=args.batch_size, nepoch=args.nepoch, lr=args.lr,\
+        alpha=args.alpha, loss_method=args.loss_method)
