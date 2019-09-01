@@ -30,7 +30,7 @@ class ProjENet(nn.Module):
         self.tanh = nn.Tanh()
         self.dropout = nn.Dropout(p=p_dropout)
 
-    def forward(self, e, r, samples, entity_type):
+    def forward(self, e, r, samples, entity_type, loss_method='pointwise'):
         e_emb = self.We(e)
         r_emb = self.Wr(r)
         Wc = self.We(samples)
@@ -43,9 +43,11 @@ class ProjENet(nn.Module):
         else:
             combination = self.Det * e_emb + self.Drt * r_emb + self.bc
         combination_unsq = combination.unsqueeze(2)
-        h_out_sigmoid = self.sigmoid(torch.bmm(Wc, self.dropout(self.tanh(combination_unsq))) + self.bp)
-        h_out_sigmoid_sq = h_out_sigmoid.squeeze()
-        return h_out_sigmoid_sq
+        h_out = torch.bmm(Wc, self.dropout(self.tanh(combination_unsq))) + self.bp
+        if loss_method == 'pointwise':
+            h_out = self.sigmoid(h_out)
+        h_out_sq = h_out.squeeze()
+        return h_out_sq
 
 
 class ProjE:
@@ -195,8 +197,14 @@ class ProjE:
                 label_t.append(candidate_label_h)
         return Sh, Th, label_h, St, Tt, label_t
 
-    #pointwise_loss
-    def fit(self, X, batch_size=200, nepoch=100, lr=0.01, alpha=1e-5, validation=None):
+    def _sampled_softmax(self, tensor, weights):
+        max_val = torch.max(tensor, dim=1)[0]
+        tensor_rescaled = torch.t(torch.t(tensor) - max_val)
+        tensor_exp = torch.exp(tensor_rescaled)
+        tensor_sum = torch.sum(tensor_exp * torch.abs(weights), dim=1)
+        return (tensor_exp/tensor_sum) * torch.abs(weights)
+
+    def fit(self, X, batch_size=200, nepoch=100, lr=0.01, alpha=1e-5, validation=None, loss_method='wlistwise'):
         def init_params(m):
             if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding) or isinstance(m, nn.Parameter) :
                 torch.nn.init.uniform_(m.weight.data, a=-6./(self.vector_dim**(0.5)), b=6./(self.vector_dim**(0.5)))
@@ -218,18 +226,30 @@ class ProjE:
 
                 Sh, Th, label_h, St, Tt, label_t = self._candidate_sampling_with_cache(batch)
                 Sh = torch.tensor(Sh).to(self.device); Th = torch.stack(Th).to(self.device); label_h = torch.stack(label_h).to(self.device)
-                h_out_sigmoid_h = self.model(Sh[:,0], Sh[:,1], Th, 0)
-                pointwise_loss_h = F.binary_cross_entropy(h_out_sigmoid_h, label_h, reduction='sum')
+                h_out_h = self.model(Sh[:,0], Sh[:,1], Th, 0)
 
                 St = torch.tensor(St).to(self.device); Tt = torch.stack(Tt).to(self.device); label_t = torch.stack(label_t).to(self.device)
-                h_out_sigmoid_t = self.model(St[:,0], St[:,1], Tt, 2)
-                pointwise_loss_t = F.binary_cross_entropy(h_out_sigmoid_t, label_t, reduction='sum')
+                h_out_t = self.model(St[:,0], St[:,1], Tt, 2)
+
+                if loss_method == 'pointwise':
+                    loss_h = F.binary_cross_entropy(h_out_h, label_h, reduction='sum')
+                    loss_t = F.binary_cross_entropy(h_out_t, label_t, reduction='sum')
+                elif loss_method == 'listwise':
+                    h_out_h_sm = self._sampled_softmax(h_out_h, label_h)
+                    loss_h = -torch.sum(torch.log(torch.clip(h_out_h_sm, 1e-10, 1.)) * label_h)
+                    h_out_t_sm = self._sampled_softmax(h_out_t, label_t)
+                    loss_t = -torch.sum(torch.log(torch.clip(h_out_t_sm, 1e-10, 1.)) * label_t)
+                else: #wlistwise
+                    h_out_h_sm = self._sampled_softmax(h_out_h, label_h)
+                    loss_h = -torch.sum(torch.log(torch.clip(h_out_h_sm, 1e-10, 1.)) * label_h / torch.sum(label_h, dim=1))
+                    h_out_t_sm = self._sampled_softmax(h_out_t, label_t)
+                    loss_t = -torch.sum(torch.log(torch.clip(h_out_t_sm, 1e-10, 1.)) * label_t / torch.sum(label_t, dim=1))
 
                 regu_l1 = 0
                 for name, param in self.model.named_parameters():
                     if not name in ['bp', 'bc'] and not 'bias' in name:
                         regu_l1 += torch.norm(param, 1)
-                loss = pointwise_loss_h + pointwise_loss_t + alpha*regu_l1
+                loss = loss_h + loss_t + alpha*regu_l1
                 loss.backward()
                 optimizer.step()
                 batch_loss += loss.item()

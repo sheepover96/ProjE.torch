@@ -52,6 +52,7 @@ if __name__ == '__main__':
     device = torch.device("cuda" if GPU else "cpu")
     train_data, entity_dic, link_dic = load(TRAIN_DATASET_PATH)
     train_data_tensor = torch.tensor(train_data)
+    train_data_tensor = train_data_tensor[:1000]
     test_data = load_with_dic(TEST_DATASET_PATH, entity_dic, link_dic)
     proje = ProjE(device=device,nentity=len(entity_dic), nrelation=len(link_dic))
     proje.fit(train_data_tensor, validation=torch.tensor(test_data))
