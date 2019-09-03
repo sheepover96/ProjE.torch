@@ -3,6 +3,10 @@
 pytorch implementation of ProjE: Embedding Projection for Knowledge Graph Completion.
 https://arxiv.org/abs/1611.05425
 
+# Dataset
+make dataset directory and put them.
+https://www.microsoft.com/en-us/download/details.aspx?id=52312
+
 # How to run code
 
 ```
